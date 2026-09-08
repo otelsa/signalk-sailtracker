@@ -1,0 +1,7 @@
+# Keep LF in the working tree on every platform. Without this, Git checks
+# out CRLF on Windows and Prettier's endOfLine check (which the CI runs as
+# a blocking step) fails there while passing everywhere else.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
