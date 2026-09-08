@@ -1,0 +1,18 @@
+name: SignalK Plugin CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
+    with:
+      # Blocking format check -- keeps diffs about behaviour, not whitespace.
+      format-check-command: 'npm run prettier:check'
+      # Replaces the plain test run and appends coverage to the job summary.
+      coverage-command: 'npm run coverage'
+      # Installs the plugin into a real SignalK server and verifies it loads.
+      enable-signalk-integration: true

@@ -1,0 +1,46 @@
+{
+  "name": "signalk-sailtracker-noomi",
+  "version": "1.1.0",
+  "description": "Logs AIS sailboats seen by a Signal K server every few minutes and shows their tracks on an OpenSeaMap chart",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "Alexander Pilarczyk <alexander@pilarczyk.de>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/otelsa/signalk-sailtracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/otelsa/signalk-sailtracker/issues"
+  },
+  "homepage": "https://github.com/otelsa/signalk-sailtracker#readme",
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-webapp",
+    "signalk-category-ais",
+    "ais",
+    "sailing",
+    "tracking"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "signalk": {
+    "appIcon": "app-icon.svg",
+    "displayName": "⛵ Sailtracker"
+  },
+  "files": [
+    "index.js",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage",
+    "prettier": "prettier --write .",
+    "prettier:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.8.2"
+  }
+}

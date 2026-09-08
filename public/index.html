@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sailtracker</title>
+    <link rel="stylesheet" href="./leaflet/leaflet.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="./app-icon.svg" alt="" />
+        <h1>Sailtracker</h1>
+      </div>
+      <div class="meta">
+        <select id="range-select" aria-label="Zeitraum"></select>
+        <span id="boat-count">– Boote</span>
+        <span id="interval-info"></span>
+      </div>
+    </header>
+
+    <main>
+      <aside class="sidebar">
+        <button id="show-all" class="boat-row all-row active">
+          <span class="dot" style="background: #888"></span>
+          <span class="boat-name">Alle Tracks</span>
+        </button>
+        <div id="boat-list"></div>
+        <div id="empty-hint" class="empty-hint" hidden>
+          Noch keine Segelboote geloggt – der erste Scan läuft kurz nach dem Start des Plugins,
+          danach alle paar Minuten.
+        </div>
+      </aside>
+
+      <div class="map-wrap">
+        <div id="map"></div>
+        <div id="timeline-bar" class="timeline-bar" hidden>
+          <button
+            id="tl-play"
+            class="icon-button"
+            aria-label="Abspielen"
+            title="Zeitstrahl abspielen"
+          >
+            ▶
+          </button>
+          <input id="tl-slider" type="range" min="0" max="0" value="0" step="1" />
+          <span id="tl-time" class="tl-time"></span>
+        </div>
+      </div>
+    </main>
+
+    <script src="./leaflet/leaflet.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
