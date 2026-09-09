@@ -18,6 +18,9 @@ directory, and the webapp is served by your own Signal K server.
   track point by point, with speed, course and timestamp at each fix
 - A range picker: the **last 2 days** by default, any single day, or the
   whole retained history
+- A phone layout: below 720 px the boat list becomes a bottom sheet so the
+  chart keeps the full width, tap targets grow on touch screens, and a
+  button recentres the chart on your own boat
 
 ## Installation
 

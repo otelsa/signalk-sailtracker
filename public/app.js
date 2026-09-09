@@ -29,9 +29,24 @@ const tlSliderEl = document.querySelector('#tl-slider')
 const tlTimeEl = document.querySelector('#tl-time')
 const tlPlayEl = document.querySelector('#tl-play')
 const rangeSelectEl = document.querySelector('#range-select')
+const sheetHandleEl = document.querySelector('#sheet-handle')
+const sheetCountEl = document.querySelector('#sheet-count')
+const sheetIntervalEl = document.querySelector('#sheet-interval')
+const recenterEl = document.querySelector('#recenter')
+
+// Auf einem Telefon liegt die Bootsliste als Bottom-Sheet über der Karte,
+// und alles Antippbare braucht mehr Fläche als ein Mauszeiger. Beides wird
+// getrennt abgefragt: ein Touch-Display am Kartentisch ist breit, ein
+// Browserfenster am Rand des Schreibtischs schmal.
+const TOUCH = window.matchMedia('(pointer: coarse)').matches
+const sheetLayout = () => window.matchMedia('(max-width: 720px)').matches
+const TRACK_WEIGHT = TOUCH ? 3 : 2
+const DOT_RADIUS = TOUCH ? 8 : 6
+const SCRUB_RADIUS = TOUCH ? 9 : 7
 
 let map
 let selfMarker
+let selfPos = null
 let selfCentered = false
 const trackLayers = new Map() // mmsi -> {polyline, marker}  (used in "Alle" mode)
 let selectedMmsi = null // null = show all
@@ -60,6 +75,11 @@ function colorFor(mmsi) {
   return PALETTE[hash % PALETTE.length]
 }
 
+// Ein Popup darf auf 360 px Bildschirmbreite nicht über den Rand ragen,
+// und beim Aufklappen muss die Karte weit genug nachrücken, dass es nicht
+// unter der Kopfzeile klebt.
+const POPUP_OPTS = { maxWidth: 260, autoPanPadding: [20, 20] }
+
 function initMap() {
   map = L.map('map', { zoomControl: true }).setView([54.5, 16.5], 9)
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -70,6 +90,10 @@ function initMap() {
     attribution: '&copy; OpenSeaMap contributors',
     maxZoom: 18
   }).addTo(map)
+  // Ein Tipper auf die Karte heißt "ich will die Karte sehen".
+  map.on('click', () => {
+    if (sheetLayout()) setSheet(false)
+  })
 }
 
 function fmtAge(iso) {
@@ -179,7 +203,9 @@ rangeSelectEl.addEventListener('change', () => {
 })
 
 function renderList(boats) {
-  boatCountEl.textContent = `${boats.length} Boot${boats.length === 1 ? '' : 'e'}`
+  const label = `${boats.length} Boot${boats.length === 1 ? '' : 'e'}`
+  boatCountEl.textContent = label
+  sheetCountEl.textContent = label
   boatListEl.innerHTML = ''
   emptyHintEl.hidden = boats.length > 0
 
@@ -234,16 +260,16 @@ function drawTrack(mmsi, name, track) {
   if (!track.length) return
   const color = colorFor(mmsi)
   const latlngs = track.map((p) => [p.lat, p.lon])
-  const polyline = L.polyline(latlngs, { color, weight: 2, opacity: 0.85 }).addTo(map)
+  const polyline = L.polyline(latlngs, { color, weight: TRACK_WEIGHT, opacity: 0.85 }).addTo(map)
   const last = track[track.length - 1]
   const marker = L.circleMarker([last.lat, last.lon], {
-    radius: 6,
+    radius: DOT_RADIUS,
     color,
     fillColor: color,
     fillOpacity: 0.9,
     weight: 2
   }).addTo(map)
-  marker.bindPopup(pointPopupHtml(name || mmsi, last))
+  marker.bindPopup(pointPopupHtml(name || mmsi, last), POPUP_OPTS)
   trackLayers.set(mmsi, { polyline, marker })
 }
 
@@ -273,17 +299,21 @@ function showSingleBoatTrack(mmsi, name, track) {
   scrubName = name || mmsi
 
   const latlngs = track.map((p) => [p.lat, p.lon])
-  scrubPolyline = L.polyline(latlngs, { color: scrubColor, weight: 2, opacity: 0.85 }).addTo(map)
+  scrubPolyline = L.polyline(latlngs, {
+    color: scrubColor,
+    weight: TRACK_WEIGHT,
+    opacity: 0.85
+  }).addTo(map)
 
   const lastIndex = track.length - 1
   scrubMarker = L.circleMarker(latlngs[lastIndex], {
-    radius: 7,
+    radius: SCRUB_RADIUS,
     color: scrubColor,
     fillColor: scrubColor,
     fillOpacity: 0.95,
     weight: 2
   }).addTo(map)
-  scrubMarker.bindPopup(pointPopupHtml(scrubName, track[lastIndex])).openPopup()
+  scrubMarker.bindPopup(pointPopupHtml(scrubName, track[lastIndex]), POPUP_OPTS).openPopup()
 
   if (track.length >= 2) {
     tlSliderEl.min = 0
@@ -349,6 +379,7 @@ async function loadTrack(mmsi, name) {
 function selectBoat(mmsi) {
   selectedMmsi = mmsi
   showAllBtn.classList.toggle('active', mmsi === null)
+  if (sheetLayout()) setSheet(false)
   renderList(lastBoats)
   clearLayers()
   if (mmsi === null) {
@@ -361,21 +392,41 @@ function selectBoat(mmsi) {
 
 showAllBtn.addEventListener('click', () => selectBoat(null))
 
+// Das Sheet verdeckt aufgeklappt den unteren Teil der Karte. Nach der Wahl
+// eines Bootes will man genau dorthin sehen, also klappt es dann selbst
+// wieder ein.
+function setSheet(open) {
+  document.body.classList.toggle('sheet-open', open)
+  sheetHandleEl.setAttribute('aria-expanded', String(open))
+}
+
+sheetHandleEl.addEventListener('click', () =>
+  setSheet(!document.body.classList.contains('sheet-open'))
+)
+
 function updateSelf(self) {
   if (!self) return
+  selfPos = [self.lat, self.lon]
   if (!selfMarker) {
-    selfMarker = L.marker([self.lat, self.lon], {
+    selfMarker = L.marker(selfPos, {
       icon: L.divIcon({ className: 'self-marker', html: '⛵', iconSize: [24, 24] })
     }).addTo(map)
-    selfMarker.bindPopup('Noomi')
+    selfMarker.bindPopup('Noomi', POPUP_OPTS)
   } else {
-    selfMarker.setLatLng([self.lat, self.lon])
+    selfMarker.setLatLng(selfPos)
   }
+  recenterEl.hidden = false
   if (!selfCentered) {
-    map.setView([self.lat, self.lon], 11)
+    map.setView(selfPos, 11)
     selfCentered = true
   }
 }
+
+// Mit dem Daumen ist die Karte schnell verschoben und der Weg zurück zum
+// eigenen Boot sonst Handarbeit.
+recenterEl.addEventListener('click', () => {
+  if (selfPos) map.setView(selfPos, Math.max(map.getZoom(), 11))
+})
 
 async function refresh() {
   try {
@@ -383,9 +434,11 @@ async function refresh() {
     const data = await res.json()
     lastBoats = data.boats || []
     buildRangeOptions(data.dataRange)
-    intervalInfoEl.textContent = data.config
-      ? `alle ${data.config.intervalMinutes} min · Class ${data.config.aisClass}`
+    const interval = data.config
+      ? `Scan alle ${data.config.intervalMinutes} min · Class ${data.config.aisClass}`
       : ''
+    intervalInfoEl.textContent = interval
+    sheetIntervalEl.textContent = interval
     updateSelf(data.self)
     renderList(lastBoats)
     // Refresh the currently visible track(s) too, so positions keep
@@ -393,6 +446,9 @@ async function refresh() {
     // actively scrubbing/playing a boat's history, so a background
     // refresh doesn't yank the slider back to "now".
     if (playTimer) return
+    // Dasselbe gilt fürs Ziehen von Hand: mit dem Finger dauert das länger
+    // als 30 s, und ein Neuzeichnen würde den Regler ans Ende reißen.
+    if (scrubTrack && Number(tlSliderEl.value) < Number(tlSliderEl.max)) return
     if (selectedMmsi === null) {
       clearLayers()
       for (const b of lastBoats) loadTrack(b.mmsi, b.name)
@@ -408,6 +464,15 @@ async function refresh() {
     console.error('sailtracker: refresh failed', err)
   }
 }
+
+// Beim Drehen des Telefons und beim Ein-/Ausfahren der Adressleiste ändert
+// sich die Kartenhöhe, ohne dass Leaflet davon erfährt -- ohne das bleiben
+// graue Streifen am Rand stehen.
+let resizeTimer = null
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => map.invalidateSize(), 150)
+})
 
 initMap()
 refresh()

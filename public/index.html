@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101d2e" />
     <title>Sailtracker</title>
     <link rel="stylesheet" href="./leaflet/leaflet.css" />
     <link rel="stylesheet" href="./styles.css" />
@@ -21,21 +22,48 @@
     </header>
 
     <main>
-      <aside class="sidebar">
-        <button id="show-all" class="boat-row all-row active">
-          <span class="dot" style="background: #888"></span>
-          <span class="boat-name">Alle Tracks</span>
+      <!-- Auf dem Telefon ist dieses Panel kein Seitenstreifen, sondern ein
+           Bottom-Sheet: eingeklappt bleibt nur der Griff mit der Bootszahl
+           stehen, die Karte behält die volle Breite. -->
+      <aside class="sidebar" id="sidebar">
+        <button
+          class="sheet-handle"
+          id="sheet-handle"
+          aria-expanded="false"
+          aria-controls="sheet-body"
+        >
+          <span class="grabber" aria-hidden="true"></span>
+          <span id="sheet-count">– Boote</span>
+          <span class="chevron" aria-hidden="true">▲</span>
         </button>
-        <div id="boat-list"></div>
-        <div id="empty-hint" class="empty-hint" hidden>
-          Noch keine Segelboote geloggt – der erste Scan läuft kurz nach dem Start des Plugins,
-          danach alle paar Minuten.
+
+        <div class="sheet-body" id="sheet-body">
+          <button id="show-all" class="boat-row all-row active">
+            <span class="dot" style="background: #888"></span>
+            <span class="boat-name">Alle Tracks</span>
+          </button>
+          <div id="boat-list"></div>
+          <div id="empty-hint" class="empty-hint" hidden>
+            Noch keine Segelboote geloggt – der erste Scan läuft kurz nach dem Start des Plugins,
+            danach alle paar Minuten.
+          </div>
+          <div class="sheet-foot"><span id="sheet-interval"></span></div>
         </div>
       </aside>
 
       <div class="map-wrap">
         <div id="map"></div>
+        <button
+          id="recenter"
+          class="map-button"
+          aria-label="Karte auf das eigene Boot zentrieren"
+          title="Auf das eigene Boot zentrieren"
+          hidden
+        >
+          ⛵
+        </button>
         <div id="timeline-bar" class="timeline-bar" hidden>
+          <span id="tl-time" class="tl-time"></span>
           <button
             id="tl-play"
             class="icon-button"
@@ -45,7 +73,6 @@
             ▶
           </button>
           <input id="tl-slider" type="range" min="0" max="0" value="0" step="1" />
-          <span id="tl-time" class="tl-time"></span>
         </div>
       </div>
     </main>
