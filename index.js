@@ -26,6 +26,20 @@ const MS_PER_MINUTE = 60 * 1000
 const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE
 const MS_TO_KN = 19.438444924574 // m/s -> tenths of a knot
 
+// Speed in knots, one decimal -- exactly what ends up in a track point.
+// null rather than 0 when the model has no speed at all: "we don't know"
+// and "lying still" are different answers.
+function knotsFrom(value) {
+  return typeof value === 'number' ? Math.round(value * MS_TO_KN) / 10 : null
+}
+
+// Whether a vessel has way on. Compared against the same rounded knots
+// that get written to the log, so a point never shows 0.1 kn under a
+// "faster than 0.1 kn" rule.
+function isUnderway(sogKn, cfg) {
+  return sogKn !== null && sogKn > cfg.underwaySpeedKn
+}
+
 function haversineMeters(lat1, lon1, lat2, lon2) {
   const toRad = (d) => (d * Math.PI) / 180
   const dLat = toRad(lat2 - lat1)
@@ -82,22 +96,34 @@ function pruneTrack(track, { retentionDays, maxPoints, now = Date.now() }) {
 // belongs in the log, in one place. Returns null when the vessel is not a
 // match, otherwise the values that go into a track point -- so the caller
 // does no filtering of its own and the rules stay testable in isolation.
-function matchVessel(vessel, cfg, { now, selfPosition } = {}) {
+function matchVessel(vessel, cfg, { now, selfPosition, selfUnderway } = {}) {
   if (!vessel) return null
+
+  const nav = vessel.navigation || {}
+  const sog = knotsFrom(nav.speedOverGround && nav.speedOverGround.value)
+
+  // Normally only the configured ship types and transponder class are
+  // logged. While own vessel is under way, the "log every moving vessel"
+  // option widens that to any target that also has way on: on passage the
+  // traffic around us is the interesting part, while a hull lying at
+  // anchor adds a pile of identical points and nothing else.
+  const underwayCatch = cfg.underwayLogsAll && selfUnderway === true && isUnderway(sog, cfg)
 
   const shipTypeValue =
     vessel.design && vessel.design.aisShipType && vessel.design.aisShipType.value
   const shipTypeId = shipTypeValue && shipTypeValue.id
-  if (!cfg.shipTypeIds.includes(shipTypeId)) return null
-
   const aisClass =
     vessel.sensors &&
     vessel.sensors.ais &&
     vessel.sensors.ais.class &&
     vessel.sensors.ais.class.value
-  if (cfg.aisClass !== 'both' && aisClass !== cfg.aisClass) return null
 
-  const posNode = vessel.navigation && vessel.navigation.position
+  const typeMatches = cfg.shipTypeIds.includes(shipTypeId)
+  const classMatches = cfg.aisClass === 'both' || aisClass === cfg.aisClass
+  const normalMatch = typeMatches && classMatches
+  if (!normalMatch && !underwayCatch) return null
+
+  const posNode = nav.position
   const pos = posNode && posNode.value
   if (!pos || typeof pos.latitude !== 'number' || typeof pos.longitude !== 'number') {
     return null
@@ -125,16 +151,20 @@ function matchVessel(vessel, cfg, { now, selfPosition } = {}) {
     if (meters / METERS_PER_NM > cfg.maxRangeNm) return null
   }
 
-  const sog = vessel.navigation.speedOverGround && vessel.navigation.speedOverGround.value
-  const cog = vessel.navigation.courseOverGroundTrue && vessel.navigation.courseOverGroundTrue.value
+  const cog = nav.courseOverGroundTrue && nav.courseOverGroundTrue.value
 
   return {
     name: (vessel.name && String(vessel.name)) || undefined,
-    shipType: (shipTypeValue && shipTypeValue.name) || 'Sailing',
+    // The old blanket 'Sailing' default would mislabel a nameless target
+    // caught by the underway rule, which may be any type at all.
+    shipType: (shipTypeValue && shipTypeValue.name) || (typeMatches ? 'Sailing' : 'Vessel'),
     lat: pos.latitude,
     lon: pos.longitude,
-    sog: typeof sog === 'number' ? Math.round(sog * MS_TO_KN) / 10 : null, // -> kn, 1 decimal
-    cog: typeof cog === 'number' ? Math.round((cog * 180) / Math.PI) : null // -> deg
+    sog,
+    cog: typeof cog === 'number' ? Math.round((cog * 180) / Math.PI) : null, // -> deg
+    // True when this target only made it in because both boats are moving,
+    // i.e. the type or class filter would otherwise have dropped it.
+    underway: !normalMatch
   }
 }
 
@@ -150,6 +180,13 @@ function normalizeConfig(options = {}) {
     positionMaxAgeMinutes: options.positionMaxAgeMinutes || 10,
     maxPoints: options.maxPoints || 2000,
     retentionDays: options.retentionDays || 14,
+    underwayLogsAll: options.underwayLogsAll === true,
+    // Guarded against a negative value, which would make every target
+    // with a known speed count as moving.
+    underwaySpeedKn:
+      typeof options.underwaySpeedKn === 'number' && options.underwaySpeedKn >= 0
+        ? options.underwaySpeedKn
+        : 0.1,
     weatherEnabled: options.weatherEnabled !== false,
     weatherSource: options.weatherSource || 'auto'
   }
@@ -254,12 +291,23 @@ const createPlugin = function (app) {
     }
   }
 
+  // Own speed decides whether the wide net is out this scan. Read fresh
+  // every time: the answer changes the moment the lines come off.
+  function selfIsUnderway() {
+    return isUnderway(
+      knotsFrom(app.getPath(`vessels.${app.selfId}.navigation.speedOverGround.value`)),
+      cfg
+    )
+  }
+
   async function scanAndLog() {
     const selfPosition = app.getPath(`vessels.${app.selfId}.navigation.position.value`)
+    const selfUnderway = selfIsUnderway()
     const vesselList = app.getPath('vessels') || {}
     const now = Date.now()
     const stamp = new Date(now).toISOString()
     let matched = 0
+    let extra = 0
 
     // Collect matches first, then resolve weather for them together: the
     // lookups share a per-cell cache, so boats in the same bay cost one
@@ -267,7 +315,7 @@ const createPlugin = function (app) {
     const hits = []
     for (const key in vesselList) {
       if (key === app.selfId) continue
-      const hit = matchVessel(vesselList[key], cfg, { now, selfPosition })
+      const hit = matchVessel(vesselList[key], cfg, { now, selfPosition, selfUnderway })
       if (hit) hits.push({ mmsi: mmsiFor(vesselList[key], key), hit })
     }
 
@@ -309,10 +357,14 @@ const createPlugin = function (app) {
       })
       boat.track = pruneTrack(boat.track, { ...cfg, now })
       matched++
+      if (hit.underway) extra++
     }
 
     dirty = matched > 0 || dirty
-    log(`scan complete: ${matched} sailboat(s) logged, ${Object.keys(boats).length} tracked total`)
+    const via = selfUnderway && cfg.underwayLogsAll ? `, ${extra} of them under way only` : ''
+    log(
+      `scan complete: ${matched} vessel(s) logged${via}, ${Object.keys(boats).length} tracked total`
+    )
     saveToDisk()
   }
 
@@ -383,8 +435,12 @@ const createPlugin = function (app) {
           intervalMinutes: cfg.intervalMinutes,
           aisClass: cfg.aisClass,
           maxRangeNm: cfg.maxRangeNm,
-          retentionDays: cfg.retentionDays
+          retentionDays: cfg.retentionDays,
+          underwayLogsAll: cfg.underwayLogsAll
         },
+        // Without this the webapp could not tell whether the wide net is
+        // out at the moment -- the log would just quietly get busier.
+        selfUnderway: selfIsUnderway(),
         dataRange: dataRangeOf(boats),
         boats: boatsInWindow(boats, parseWindow(req.query))
       })
@@ -446,6 +502,19 @@ const createPlugin = function (app) {
         title: 'Keep track points for (days)',
         default: 14
       },
+      underwayLogsAll: {
+        type: 'boolean',
+        title: 'While under way, also log every other moving vessel',
+        description:
+          'Ignores the ship type and transponder class filters above for targets that have way on, but only while own vessel is moving itself. At anchor or in the marina the normal filters apply again. Range and position age still apply either way.',
+        default: false
+      },
+      underwaySpeedKn: {
+        type: 'number',
+        title: 'Speed above which a vessel counts as under way (kn)',
+        description: 'Applies to own vessel and to the other targets alike.',
+        default: 0.1
+      },
       weatherEnabled: {
         type: 'boolean',
         title: 'Record wind and wave conditions with each track point',
@@ -470,6 +539,8 @@ module.exports = createPlugin
 // plugin contract -- the server only ever calls the factory above.
 module.exports.internals = {
   haversineMeters,
+  knotsFrom,
+  isUnderway,
   parseWindow,
   trackInWindow,
   pruneTrack,

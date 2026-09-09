@@ -346,6 +346,41 @@ describe('createWeatherSource', () => {
     assert.equal(fetched, 2, 'one pair of endpoint calls, then cache hits')
   })
 
+  // A scan starts every boat's lookup before any of them resolves. Caching
+  // only the finished result would let each one miss the cache and fire
+  // its own request -- with the under-way rule that is a whole shipping
+  // lane hitting the API at once.
+  it('collapses concurrent lookups in one cell into a single request', async () => {
+    let fetched = 0
+    const src = createWeatherSource({
+      app: { debug: () => {}, error: () => {} },
+      fetchImpl: async () => {
+        fetched++
+        // Resolve on a later tick, so every caller is in flight first.
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return jsonResponse({})
+      }
+    })
+
+    const positions = Array.from({ length: 20 }, (_, i) => [54.35 + i * 0.001, 18.65 + i * 0.001])
+    await Promise.all(positions.map(([lat, lon]) => src.at(lat, lon, T)))
+    assert.equal(fetched, 2, 'one forecast and one marine call for the whole cell')
+  })
+
+  it('reports cells still waiting separately from cells that answered', async () => {
+    const src = createWeatherSource({
+      app: { debug: () => {}, error: () => {} },
+      fetchImpl: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        return jsonResponse({})
+      }
+    })
+    const inFlight = src.at(54.35, 18.65, T)
+    assert.equal(src.stats().pending, 1)
+    await inFlight
+    assert.equal(src.stats().pending, 0)
+  })
+
   it('caches negative results so an offline scan retries once per hour', async () => {
     let fetched = 0
     const src = createWeatherSource({

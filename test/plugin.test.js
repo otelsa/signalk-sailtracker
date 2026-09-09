@@ -68,11 +68,13 @@ function stubApp(vessels = {}, { weather = DEFAULT_WEATHER } = {}) {
     getDataDirPath: () => dataDir,
     getPath: (p) => {
       if (p === 'vessels') return vessels
+      const self = vessels[SELF_ID]
+      const nav = (self && self.navigation) || {}
       if (p === `vessels.${SELF_ID}.navigation.position.value`) {
-        const self = vessels[SELF_ID]
-        return self && self.navigation && self.navigation.position
-          ? self.navigation.position.value
-          : undefined
+        return nav.position ? nav.position.value : undefined
+      }
+      if (p === `vessels.${SELF_ID}.navigation.speedOverGround.value`) {
+        return nav.speedOverGround ? nav.speedOverGround.value : undefined
       }
       return undefined
     }
@@ -277,7 +279,41 @@ describe('GET /state', () => {
     assert.equal(body.config.intervalMinutes, 5)
     assert.equal(body.config.aisClass, 'B')
     assert.equal(body.config.retentionDays, 14)
+    assert.equal(body.config.underwayLogsAll, false)
     plugin.stop()
+  })
+
+  // The webapp can only say whether the wide net is out if the route
+  // answers from own speed at request time, not from the last scan.
+  it('reports whether own vessel is under way right now', () => {
+    const stopped = stubApp({
+      [SELF_ID]: {
+        navigation: {
+          position: { value: { latitude: 54.4, longitude: 18.7 } },
+          speedOverGround: { value: 0.02 }
+        }
+      }
+    })
+    const a = startPlugin(stopped, { underwayLogsAll: true })
+    const routerA = fakeRouter()
+    a.registerWithRouter(routerA)
+    assert.equal(callRoute(routerA, '/state').body.selfUnderway, false)
+    assert.equal(callRoute(routerA, '/state').body.config.underwayLogsAll, true)
+    a.stop()
+
+    const sailing = stubApp({
+      [SELF_ID]: {
+        navigation: {
+          position: { value: { latitude: 54.4, longitude: 18.7 } },
+          speedOverGround: { value: 3 }
+        }
+      }
+    })
+    const b = startPlugin(sailing, { underwayLogsAll: true })
+    const routerB = fakeRouter()
+    b.registerWithRouter(routerB)
+    assert.equal(callRoute(routerB, '/state').body.selfUnderway, true)
+    b.stop()
   })
 
   it('reports the full data range regardless of the active window', () => {
@@ -408,6 +444,46 @@ describe('scanning the vessel model', () => {
     assert.equal(boat.track[0].sog, 9.7)
     assert.equal(boat.track[0].cog, 180)
     assert.equal(boat.firstSeen, boat.lastSeen)
+  })
+
+  // With the option on and way on the log, the type and class filters
+  // step aside for anything else that is moving.
+  it('logs every moving vessel while own vessel is under way', async () => {
+    const vessels = {
+      [SELF_ID]: sailboat({ mmsi: '211653340' }),
+      'urn:mrn:imo:mmsi:261183840': sailboat(),
+      'urn:mrn:imo:mmsi:232008636': sailboat({
+        mmsi: '232008636',
+        name: 'ATLANTIC',
+        design: { aisShipType: { value: { id: 70, name: 'Cargo' } } },
+        sensors: { ais: { class: { value: 'A' } } }
+      }),
+      // Same cargo ship, but lying still: the rule is about traffic that
+      // is actually going somewhere.
+      'urn:mrn:imo:mmsi:232008637': sailboat({
+        mmsi: '232008637',
+        name: 'MOORED',
+        design: { aisShipType: { value: { id: 70, name: 'Cargo' } } },
+        sensors: { ais: { class: { value: 'A' } } },
+        navigation: {
+          position: {
+            value: { latitude: 54.35, longitude: 18.65 },
+            timestamp: new Date().toISOString()
+          },
+          speedOverGround: { value: 0 }
+        }
+      })
+    }
+    const app = stubApp(vessels)
+    const plugin = createPlugin(app)
+    plugin.start({ underwayLogsAll: true })
+    await new Promise((resolve) => setTimeout(resolve, 5300))
+    plugin.stop()
+
+    const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'sailboats.json'), 'utf8'))
+    assert.deepEqual(Object.keys(saved).sort(), ['232008636', '261183840'])
+    assert.equal(saved['232008636'].name, 'ATLANTIC')
+    assert.equal(saved['232008636'].shipType, 'Cargo')
   })
 
   it('records wind and wave conditions on each logged point', async () => {

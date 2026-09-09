@@ -434,9 +434,17 @@ async function refresh() {
     const data = await res.json()
     lastBoats = data.boats || []
     buildRangeOptions(data.dataRange)
-    const interval = data.config
-      ? `Scan alle ${data.config.intervalMinutes} min · Class ${data.config.aisClass}`
-      : ''
+    const c = data.config
+    const parts = c ? [`Scan alle ${c.intervalMinutes} min`, `Class ${c.aisClass}`] : []
+    // Mit der Weitfang-Option hängt es an der eigenen Fahrt, was überhaupt
+    // geloggt wird. Ohne diese Zeile bliebe unerklärlich, warum plötzlich
+    // Frachter in der Liste stehen -- oder eben nicht mehr.
+    if (c && c.underwayLogsAll) {
+      parts.push(
+        data.selfUnderway ? 'in Fahrt: alle fahrenden Schiffe' : 'im Stand: nur gewählte Typen'
+      )
+    }
+    const interval = parts.join(' · ')
     intervalInfoEl.textContent = interval
     sheetIntervalEl.textContent = interval
     updateSelf(data.self)

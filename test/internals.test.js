@@ -6,6 +6,8 @@ const assert = require('node:assert/strict')
 
 const {
   haversineMeters,
+  knotsFrom,
+  isUnderway,
   parseWindow,
   trackInWindow,
   pruneTrack,
@@ -286,6 +288,146 @@ describe('matchVessel', () => {
   })
 })
 
+describe('knotsFrom', () => {
+  it('converts m/s to knots with one decimal', () => {
+    assert.equal(knotsFrom(5), 9.7)
+    assert.equal(knotsFrom(0), 0)
+  })
+
+  it('is null for a missing speed rather than zero', () => {
+    assert.equal(knotsFrom(undefined), null)
+    assert.equal(knotsFrom(null), null)
+    assert.equal(knotsFrom('4'), null)
+  })
+})
+
+describe('isUnderway', () => {
+  const c = normalizeConfig({})
+
+  it('needs more than the threshold, not exactly it', () => {
+    assert.equal(isUnderway(0.2, c), true)
+    assert.equal(isUnderway(0.1, c), false)
+    assert.equal(isUnderway(0, c), false)
+  })
+
+  it('treats an unknown speed as not moving', () => {
+    assert.equal(isUnderway(null, c), false)
+  })
+
+  it('honours a configured threshold', () => {
+    const slow = normalizeConfig({ underwaySpeedKn: 2 })
+    assert.equal(isUnderway(1.5, slow), false)
+    assert.equal(isUnderway(2.5, slow), true)
+  })
+})
+
+// The wide net: while own vessel has way on, any other moving vessel is
+// logged regardless of ship type and transponder class.
+describe('matchVessel with the under-way rule', () => {
+  const now = Date.now()
+  const here = { latitude: 54.35, longitude: 18.65 }
+  const wide = normalizeConfig({ underwayLogsAll: true })
+  const moving = { now, selfPosition: here, selfUnderway: true }
+  const msFor = (kn) => kn / 1.9438444924574
+
+  // Class A cargo: rejected by both the type and the class filter, so it
+  // can only ever get in through the under-way rule.
+  function cargo(overrides = {}) {
+    return vessel({
+      mmsi: '232008636',
+      name: 'ATLANTIC',
+      design: { aisShipType: { value: { id: 70, name: 'Cargo' } } },
+      sensors: { ais: { class: { value: 'A' } } },
+      ...overrides
+    })
+  }
+
+  it('logs a moving cargo ship while own vessel is under way', () => {
+    const hit = matchVessel(cargo(), wide, moving)
+    assert.ok(hit)
+    assert.equal(hit.name, 'ATLANTIC')
+    assert.equal(hit.shipType, 'Cargo')
+  })
+
+  it('leaves it out again once own vessel stops', () => {
+    assert.equal(matchVessel(cargo(), wide, { now, selfPosition: here, selfUnderway: false }), null)
+  })
+
+  it('treats an unknown own speed as stopped', () => {
+    assert.equal(matchVessel(cargo(), wide, { now, selfPosition: here }), null)
+  })
+
+  it('leaves out a target that is not moving itself', () => {
+    const anchored = cargo({
+      navigation: {
+        position: { value: here, timestamp: new Date().toISOString() },
+        speedOverGround: { value: 0 }
+      }
+    })
+    assert.equal(matchVessel(anchored, wide, moving), null)
+  })
+
+  it('needs the target to be faster than the threshold, not equal to it', () => {
+    const at = (kn) =>
+      cargo({
+        navigation: {
+          position: { value: here, timestamp: new Date().toISOString() },
+          speedOverGround: { value: msFor(kn) }
+        }
+      })
+    assert.equal(matchVessel(at(0.1), wide, moving), null)
+    assert.ok(matchVessel(at(0.2), wide, moving))
+  })
+
+  it('does nothing at all while the option is off', () => {
+    assert.equal(matchVessel(cargo(), cfg, moving), null)
+  })
+
+  it('flags a wide catch and leaves a normal match unflagged', () => {
+    assert.equal(matchVessel(cargo(), wide, moving).underway, true)
+    assert.equal(matchVessel(vessel(), wide, moving).underway, false)
+  })
+
+  // The class filter alone is enough to make a target a wide catch: a
+  // Class A sailing yacht is not logged under the default settings.
+  it('counts a target that only the class filter rejected', () => {
+    const classA = vessel({ sensors: { ais: { class: { value: 'A' } } } })
+    assert.equal(matchVessel(classA, cfg, moving), null)
+    assert.equal(matchVessel(classA, wide, moving).underway, true)
+  })
+
+  it('still honours the range limit', () => {
+    const ranged = normalizeConfig({ underwayLogsAll: true, maxRangeNm: 5 })
+    const far = cargo({
+      navigation: {
+        position: {
+          value: { latitude: 55.35, longitude: 18.65 },
+          timestamp: new Date().toISOString()
+        },
+        speedOverGround: { value: 5 }
+      }
+    })
+    assert.equal(matchVessel(far, ranged, moving), null)
+  })
+
+  it('still honours the position age limit', () => {
+    const stale = cargo({
+      navigation: {
+        position: { value: here, timestamp: new Date(now - 30 * MINUTE).toISOString() },
+        speedOverGround: { value: 5 }
+      }
+    })
+    assert.equal(matchVessel(stale, wide, moving), null)
+  })
+
+  // 'Sailing' used to be the blanket fallback, which would have labelled
+  // every nameless wide catch as a sailboat.
+  it('does not call a nameless unknown type a sailboat', () => {
+    const unknown = cargo({ design: {} })
+    assert.equal(matchVessel(unknown, wide, moving).shipType, 'Vessel')
+  })
+})
+
 describe('normalizeConfig', () => {
   it('fills in defaults', () => {
     const c = normalizeConfig({})
@@ -294,6 +436,19 @@ describe('normalizeConfig', () => {
     assert.equal(c.intervalMinutes, 5)
     assert.equal(c.retentionDays, 14)
     assert.equal(c.maxRangeNm, 0)
+    assert.equal(c.underwayLogsAll, false)
+    assert.equal(c.underwaySpeedKn, 0.1)
+  })
+
+  it('only enables the under-way rule when it is explicitly true', () => {
+    assert.equal(normalizeConfig({ underwayLogsAll: true }).underwayLogsAll, true)
+    assert.equal(normalizeConfig({ underwayLogsAll: 'yes' }).underwayLogsAll, false)
+  })
+
+  it('rejects a negative under-way threshold, which would match everything', () => {
+    assert.equal(normalizeConfig({ underwaySpeedKn: -1 }).underwaySpeedKn, 0.1)
+    assert.equal(normalizeConfig({ underwaySpeedKn: 0 }).underwaySpeedKn, 0)
+    assert.equal(normalizeConfig({ underwaySpeedKn: 1.5 }).underwaySpeedKn, 1.5)
   })
 
   it('keeps explicit values, including a meaningful zero', () => {

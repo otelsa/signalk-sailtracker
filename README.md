@@ -18,6 +18,8 @@ directory, and the webapp is served by your own Signal K server.
   track point by point, with speed, course and timestamp at each fix
 - A range picker: the **last 2 days** by default, any single day, or the
   whole retained history
+- Optionally, while own vessel is under way, every other moving vessel as
+  well, whatever its type or transponder class
 - A phone layout: below 720 px the boat list becomes a bottom sheet so the
   chart keeps the full width, tap targets grow on touch screens, and a
   button recentres the chart on your own boat
@@ -36,19 +38,34 @@ from the Webapps menu.
 
 ## Configuration
 
-| Setting          | Default       | What it does                                                                                                 |
-| ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------ |
-| Log interval     | 5 min         | How often the vessel model is scanned                                                                        |
-| AIS ship types   | `36, 37`      | Which AIS ship types to log (36 = Sailing, 37 = Pleasure craft)                                              |
-| AIS class        | `B`           | `A`, `B`, or `both`. Larger cruising yachts often carry Class A — widen this if boats you expect are missing |
-| Maximum range    | 0 (unlimited) | Ignore targets further than this many nautical miles from own vessel                                         |
-| Position max age | 10 min        | Ignore targets whose last fix is older than this                                                             |
-| Max track points | 2000          | Per-boat cap, newest kept                                                                                    |
-| Retention        | 14 days       | Points older than this are dropped                                                                           |
+| Setting           | Default       | What it does                                                                                                 |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------------------------ |
+| Log interval      | 5 min         | How often the vessel model is scanned                                                                        |
+| AIS ship types    | `36, 37`      | Which AIS ship types to log (36 = Sailing, 37 = Pleasure craft)                                              |
+| AIS class         | `B`           | `A`, `B`, or `both`. Larger cruising yachts often carry Class A — widen this if boats you expect are missing |
+| Maximum range     | 0 (unlimited) | Ignore targets further than this many nautical miles from own vessel                                         |
+| Position max age  | 10 min        | Ignore targets whose last fix is older than this                                                             |
+| Max track points  | 2000          | Per-boat cap, newest kept                                                                                    |
+| Retention         | 14 days       | Points older than this are dropped                                                                           |
+| Log all under way | off           | While own vessel is moving, also log every other moving vessel                                               |
+| Under-way speed   | 0.1 kn        | Above this a vessel counts as moving, own vessel included                                                    |
 
 Two filters explain most "why is boat X missing" questions: **AIS class** and
 **ship type**. A yacht whose transponder is configured as type 99 ("Other")
 will not match the defaults, and a Class A yacht will not match `B`.
+
+### Logging everything while under way
+
+At anchor the ship-type and class filters are what keep the log readable.
+On passage the interesting part is often the traffic itself, so
+**Log all under way** drops both filters — but only for targets that have
+way on, and only while own vessel is moving too. Stop, and the normal
+filters apply again from the next scan.
+
+Range and position age still apply, and so does the per-boat point cap.
+The number of _boats_ is not capped, though: with the wide net out in a
+busy shipping lane the file grows a lot faster than usual. The webapp says
+which mode is in force under the boat list.
 
 ## Weather
 

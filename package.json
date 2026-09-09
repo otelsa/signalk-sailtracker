@@ -1,6 +1,6 @@
 {
   "name": "signalk-sailtracker",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Logs AIS sailboats seen by a Signal K server every few minutes and shows their tracks on an OpenSeaMap chart",
   "main": "index.js",
   "license": "MIT",

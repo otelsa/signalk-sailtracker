@@ -215,33 +215,49 @@ function createWeatherSource({ app, source = 'auto', fetchImpl, now = () => Date
     }
   }
 
+  async function lookup(lat, lon, timeMs) {
+    try {
+      return (await fromWeatherApi(lat, lon)) || (await fromOnline(lat, lon, timeMs))
+    } catch (err) {
+      if (app && app.error) app.error(`sailtracker: weather lookup failed: ${err.message}`)
+      return null
+    }
+  }
+
   return {
-    async at(lat, lon, timeMs) {
-      if (typeof lat !== 'number' || typeof lon !== 'number') return null
+    at(lat, lon, timeMs) {
+      if (typeof lat !== 'number' || typeof lon !== 'number') return Promise.resolve(null)
       const key = cacheKey(lat, lon, timeMs)
-      if (cache.has(key)) return cache.get(key)
+      if (cache.has(key)) return Promise.resolve(cache.get(key))
 
-      let weather = null
-      try {
-        weather = (await fromWeatherApi(lat, lon)) || (await fromOnline(lat, lon, timeMs))
-      } catch (err) {
-        if (app && app.error) app.error(`sailtracker: weather lookup failed: ${err.message}`)
-        weather = null
-      }
-
+      // The in-flight promise goes into the cache, not just its result. A
+      // scan resolves every boat at once, so caching only on completion
+      // would let twenty boats in one grid cell each fire their own
+      // request before the first answer came back -- exactly what happens
+      // when the under-way rule widens the net in a shipping lane.
+      const pending = lookup(lat, lon, timeMs).then((weather) => {
+        // Settle the entry so stats() can tell an answered cell from one
+        // still waiting, and so eviction drops a plain value.
+        if (cache.get(key) === pending) cache.set(key, weather)
+        return weather
+      })
       // Negative results are cached too, so a scan without internet makes
       // one attempt per cell per hour instead of one per boat per scan.
-      cache.set(key, weather)
+      cache.set(key, pending)
       evictIfNeeded()
-      return weather
+      return pending
     },
 
     // Exposed for the status route, so the webapp can say where the
     // numbers came from instead of leaving the user guessing.
     stats() {
-      let hits = 0
-      for (const value of cache.values()) if (value) hits++
-      return { cached: cache.size, withData: hits, source, now: now() }
+      let withData = 0
+      let pending = 0
+      for (const value of cache.values()) {
+        if (value && typeof value.then === 'function') pending++
+        else if (value) withData++
+      }
+      return { cached: cache.size, withData, pending, source, now: now() }
     }
   }
 }
