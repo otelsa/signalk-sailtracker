@@ -176,6 +176,75 @@ describe('createWeatherSource', () => {
     }
   }
 
+  // @signalk/open-meteo-provider serves wind in observations but sea state
+  // only in the point forecast, so the two have to be merged.
+  it('fills wave height from the forecast when the observation has none', async () => {
+    let fetched = 0
+    const src = createWeatherSource({
+      app: {
+        debug: () => {},
+        error: () => {},
+        weatherApi: {
+          getObservations: async () => [
+            { wind: { speedTrue: 10, directionTrue: Math.PI }, outside: {} }
+          ],
+          getForecasts: async (_pos, type) => {
+            assert.equal(type, 'point')
+            return [
+              { wind: { speedTrue: 3, directionTrue: 0 }, water: { waveSignificantHeight: 1.4 } }
+            ]
+          }
+        }
+      },
+      fetchImpl: async () => {
+        fetched++
+        return jsonResponse({})
+      }
+    })
+    const wx = await src.at(54.35, 18.65, T)
+    // Measured wind wins over the forecast's; the gap is filled.
+    assert.equal(wx.windKn, 19.4)
+    assert.equal(wx.windDir, 180)
+    assert.equal(wx.waveM, 1.4)
+    assert.equal(fetched, 0, 'no need to go online when the provider answered')
+  })
+
+  it('does not ask for a forecast when the observation is already complete', async () => {
+    let forecasts = 0
+    const src = createWeatherSource({
+      app: {
+        debug: () => {},
+        error: () => {},
+        weatherApi: {
+          getObservations: async () => [
+            { wind: { speedTrue: 10, directionTrue: 0 }, water: { waveSignificantHeight: 0.9 } }
+          ],
+          getForecasts: async () => {
+            forecasts++
+            return []
+          }
+        }
+      }
+    })
+    const wx = await src.at(54.35, 18.65, T)
+    assert.equal(wx.waveM, 0.9)
+    assert.equal(forecasts, 0)
+  })
+
+  it('falls back to the forecast alone when observations are unavailable', async () => {
+    const src = createWeatherSource({
+      app: {
+        debug: () => {},
+        error: () => {},
+        weatherApi: {
+          getForecasts: async () => [{ water: { waveSignificantHeight: 2.1 } }]
+        }
+      }
+    })
+    const wx = await src.at(54.35, 18.65, T)
+    assert.equal(wx.waveM, 2.1)
+  })
+
   it('prefers the Signal K provider over the internet', async () => {
     let fetched = 0
     const src = createWeatherSource({

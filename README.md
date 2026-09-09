@@ -67,6 +67,16 @@ Set `weatherSource` to `signalk` to use only the local provider (never
 touching the internet), or `open-meteo` to always go online. `auto`
 prefers the local provider and falls back.
 
+> **Check your provider before trusting `auto`.** Not every provider
+> honours the position it is handed on the in-process API. With
+> `@signalk/open-meteo-provider` 1.3.0 the HTTP route
+> (`/signalk/v2/api/weather/observations?lat=..&lon=..`) returns correct
+> per-position data, while `app.weatherApi.getObservations(position)`
+> returned one fixed, stale observation for every position tested — which
+> would stamp every boat with the same conditions. Compare a couple of
+> logged points against the HTTP route after switching; if they disagree,
+> use `open-meteo`.
+
 Lookups are cached per 0.1° grid cell per hour — the resolution the
 models actually have. Boats anchored in the same bay therefore cost one
 lookup between them, not one each per scan. Failures are cached too, so a

@@ -146,21 +146,49 @@ function createWeatherSource({ app, source = 'auto', fetchImpl, now = () => Date
     }
   }
 
+  // Observations carry the current wind but, at least with
+  // @signalk/open-meteo-provider, no sea state -- waves only appear in the
+  // point forecast. So the observation is taken first (it is the better
+  // answer for "what is it doing right now") and the nearest forecast is
+  // consulted only for what the observation left blank.
   async function fromWeatherApi(lat, lon) {
     if (source !== 'auto' && source !== 'signalk') return null
     const api = app && app.weatherApi
-    if (!api || typeof api.getObservations !== 'function') return null
-    try {
-      const observations = await api.getObservations(
-        { latitude: lat, longitude: lon },
-        { maxCount: 1 }
-      )
-      const first = Array.isArray(observations) ? observations[0] : observations
-      return fromSignalK(first)
-    } catch (err) {
-      // A provider that errors is not a reason to skip the fallback.
-      if (app && app.debug) app.debug(`weather: signalk provider failed: ${err.message}`)
-      return null
+    if (!api) return null
+    const position = { latitude: lat, longitude: lon }
+
+    const observed =
+      typeof api.getObservations === 'function'
+        ? await api
+            .getObservations(position, { maxCount: 1 })
+            .then((r) => fromSignalK(Array.isArray(r) ? r[0] : r))
+            .catch((err) => {
+              if (app.debug) app.debug(`weather: observations failed: ${err.message}`)
+              return null
+            })
+        : null
+
+    const needsForecast = !observed || observed.waveM === null
+    if (!needsForecast) return observed
+
+    const forecast =
+      typeof api.getForecasts === 'function'
+        ? await api
+            .getForecasts(position, 'point', { maxCount: 1 })
+            .then((r) => fromSignalK(Array.isArray(r) ? r[0] : r))
+            .catch((err) => {
+              if (app.debug) app.debug(`weather: forecast failed: ${err.message}`)
+              return null
+            })
+        : null
+
+    if (!observed) return forecast
+    if (!forecast) return observed
+    // Measured values win; the forecast only fills the gaps.
+    return {
+      windDir: observed.windDir !== null ? observed.windDir : forecast.windDir,
+      windKn: observed.windKn !== null ? observed.windKn : forecast.windKn,
+      waveM: observed.waveM !== null ? observed.waveM : forecast.waveM
     }
   }
 
