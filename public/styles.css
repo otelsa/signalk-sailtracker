@@ -234,3 +234,10 @@ main {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* Wetterzeile im Popup: leicht abgesetzt, damit Schiffsdaten (gemessen)
+   und Modelldaten (berechnet) unterscheidbar bleiben. */
+.wx {
+  color: var(--accent-warm);
+  font-size: 12px;
+}

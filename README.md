@@ -47,6 +47,35 @@ Two filters explain most "why is boat X missing" questions: **AIS class** and
 **ship type**. A yacht whose transponder is configured as type 99 ("Other")
 will not match the defaults, and a Class A yacht will not match `B`.
 
+## Weather
+
+Each track point also records the conditions at that position and time:
+wind direction (degrees true, the direction the wind comes _from_), wind
+speed in knots, and significant wave height in metres. `null` means no
+source could answer — never "calm".
+
+Two sources are tried, in order:
+
+1. **This server's own weather provider**, via Signal K's Weather API. A
+   GRIB provider serving local GRIB2 files lands here, so this path works
+   offshore with no internet and needs no configuration change once such
+   a provider is installed.
+2. **Open-Meteo** over HTTPS — the same numerical models a GRIB file
+   carries (ICON/GFS/ECMWF), served as JSON, no API key. Needs internet.
+
+Set `weatherSource` to `signalk` to use only the local provider (never
+touching the internet), or `open-meteo` to always go online. `auto`
+prefers the local provider and falls back.
+
+Lookups are cached per 0.1° grid cell per hour — the resolution the
+models actually have. Boats anchored in the same bay therefore cost one
+lookup between them, not one each per scan. Failures are cached too, so a
+scan without internet makes one attempt per cell per hour rather than one
+per boat.
+
+Weather is never allowed to cost a track point: if every source fails,
+the fix is logged with null conditions.
+
 ## Requirements
 
 The plugin reads `design.aisShipType`, `sensors.ais.class` and
@@ -66,7 +95,18 @@ Track points are stored in the plugin's data directory as `sailboats.json`:
     "shipType": "Sailing",
     "firstSeen": "2026-09-06T10:00:00.000Z",
     "lastSeen": "2026-09-08T13:10:32.068Z",
-    "track": [{ "t": "...", "lat": 54.35, "lon": 18.65, "sog": 4.2, "cog": 187 }]
+    "track": [
+      {
+        "t": "...",
+        "lat": 54.35,
+        "lon": 18.65,
+        "sog": 4.2,
+        "cog": 187,
+        "windDir": 254,
+        "windKn": 15.9,
+        "waveM": 0.86
+      }
+    ]
   }
 }
 ```

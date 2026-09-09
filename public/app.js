@@ -211,8 +211,21 @@ function clearLayers() {
   stopScrub()
 }
 
+// Conditions are only present on points logged after weather recording
+// was added, and stay null whenever no source could answer -- so the
+// weather line is omitted rather than showing a row of dashes.
+function wxHtml(point) {
+  const parts = []
+  if (point.windDir !== null && point.windDir !== undefined) parts.push(`${point.windDir}°`)
+  if (point.windKn !== null && point.windKn !== undefined) parts.push(`${point.windKn} kn`)
+  const wind = parts.length ? `Wind ${parts.join(' / ')}` : null
+  const wave = point.waveM !== null && point.waveM !== undefined ? `Welle ${point.waveM} m` : null
+  const line = [wind, wave].filter(Boolean).join(' · ')
+  return line ? `<br><span class="wx">${line}</span>` : ''
+}
+
 function pointPopupHtml(name, point) {
-  return `<strong>${escapeHtml(name)}</strong><br>${point.sog ?? '–'} kn · ${point.cog ?? '–'}°<br>${fmtDateTime(point.t)}`
+  return `<strong>${escapeHtml(name)}</strong><br>${point.sog ?? '–'} kn · ${point.cog ?? '–'}°${wxHtml(point)}<br>${fmtDateTime(point.t)}`
 }
 
 // "Alle" mode: one static polyline + marker at the latest point per boat,

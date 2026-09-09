@@ -18,6 +18,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { createWeatherSource } = require('./weather')
 
 const EARTH_RADIUS_M = 6371000
 const METERS_PER_NM = 1852
@@ -148,7 +149,9 @@ function normalizeConfig(options = {}) {
     maxRangeNm: typeof options.maxRangeNm === 'number' ? options.maxRangeNm : 0,
     positionMaxAgeMinutes: options.positionMaxAgeMinutes || 10,
     maxPoints: options.maxPoints || 2000,
-    retentionDays: options.retentionDays || 14
+    retentionDays: options.retentionDays || 14,
+    weatherEnabled: options.weatherEnabled !== false,
+    weatherSource: options.weatherSource || 'auto'
   }
 }
 
@@ -215,6 +218,7 @@ const createPlugin = function (app) {
   let boats = {}
   let dirty = false
   let dataFile
+  let weatherSource
 
   function log(...args) {
     app.debug('[sailtracker]', ...args)
@@ -250,19 +254,32 @@ const createPlugin = function (app) {
     }
   }
 
-  function scanAndLog() {
+  async function scanAndLog() {
     const selfPosition = app.getPath(`vessels.${app.selfId}.navigation.position.value`)
     const vesselList = app.getPath('vessels') || {}
     const now = Date.now()
+    const stamp = new Date(now).toISOString()
     let matched = 0
 
+    // Collect matches first, then resolve weather for them together: the
+    // lookups share a per-cell cache, so boats in the same bay cost one
+    // request between them rather than one each.
+    const hits = []
     for (const key in vesselList) {
       if (key === app.selfId) continue
       const hit = matchVessel(vesselList[key], cfg, { now, selfPosition })
-      if (!hit) continue
+      if (hit) hits.push({ mmsi: mmsiFor(vesselList[key], key), hit })
+    }
 
-      const mmsi = mmsiFor(vesselList[key], key)
-      const stamp = new Date(now).toISOString()
+    const conditions = await Promise.all(
+      hits.map(({ hit }) =>
+        weatherSource ? weatherSource.at(hit.lat, hit.lon, now) : Promise.resolve(null)
+      )
+    )
+
+    for (let i = 0; i < hits.length; i++) {
+      const { mmsi, hit } = hits[i]
+      const wx = conditions[i]
       if (!boats[mmsi]) {
         boats[mmsi] = {
           mmsi,
@@ -277,7 +294,19 @@ const createPlugin = function (app) {
       if (hit.name) boat.name = hit.name
       boat.shipType = hit.shipType
       boat.lastSeen = stamp
-      boat.track.push({ t: stamp, lat: hit.lat, lon: hit.lon, sog: hit.sog, cog: hit.cog })
+      boat.track.push({
+        t: stamp,
+        lat: hit.lat,
+        lon: hit.lon,
+        sog: hit.sog,
+        cog: hit.cog,
+        // Wind direction is meteorological (degrees true, the direction
+        // the wind comes from), speed in knots, wave height in metres.
+        // null means "no weather source could answer", never "calm".
+        windDir: wx ? wx.windDir : null,
+        windKn: wx ? wx.windKn : null,
+        waveM: wx ? wx.waveM : null
+      })
       boat.track = pruneTrack(boat.track, { ...cfg, now })
       matched++
     }
@@ -287,30 +316,32 @@ const createPlugin = function (app) {
     saveToDisk()
   }
 
+  // scanAndLog is async since weather lookups may go out over the
+  // network; a rejection here would otherwise surface as an unhandled
+  // rejection and take the server's log with it.
+  function runScan(label) {
+    return Promise.resolve()
+      .then(scanAndLog)
+      .catch((err) => app.error(`sailtracker: ${label} failed: ${err.message}`))
+  }
+
   function scheduleNext() {
     timer = setTimeout(() => {
-      try {
-        scanAndLog()
-      } catch (err) {
-        app.error(`sailtracker: scan failed: ${err.message}`)
-      }
-      scheduleNext()
+      runScan('scan').finally(scheduleNext)
     }, cfg.intervalMinutes * MS_PER_MINUTE)
   }
 
   plugin.start = function (options) {
     cfg = normalizeConfig(options)
     dataFile = path.join(app.getDataDirPath(), 'sailboats.json')
+    weatherSource = cfg.weatherEnabled
+      ? createWeatherSource({ app, source: cfg.weatherSource })
+      : null
     loadFromDisk()
     // First scan shortly after start (so the UI has something to show
     // right away), then on the configured interval from then on.
     timer = setTimeout(() => {
-      try {
-        scanAndLog()
-      } catch (err) {
-        app.error(`sailtracker: initial scan failed: ${err.message}`)
-      }
-      scheduleNext()
+      runScan('initial scan').finally(scheduleNext)
     }, 5000)
     // Belt-and-braces periodic save even on quiet scans (e.g. only
     // pruning happened), so a long-running process doesn't hold unsaved
@@ -326,6 +357,7 @@ const createPlugin = function (app) {
     if (saveTimer) clearInterval(saveTimer)
     timer = undefined
     saveTimer = undefined
+    weatherSource = undefined
     saveToDisk()
   }
 
@@ -413,6 +445,19 @@ const createPlugin = function (app) {
         type: 'number',
         title: 'Keep track points for (days)',
         default: 14
+      },
+      weatherEnabled: {
+        type: 'boolean',
+        title: 'Record wind and wave conditions with each track point',
+        default: true
+      },
+      weatherSource: {
+        type: 'string',
+        title: 'Where conditions come from',
+        description:
+          "auto = this server's own weather provider (e.g. a GRIB provider) if one is registered, otherwise Open-Meteo over the internet. signalk = only the local provider, no internet. open-meteo = always online.",
+        enum: ['auto', 'signalk', 'open-meteo'],
+        default: 'auto'
       }
     }
   }

@@ -14,6 +14,13 @@ const createPlugin = require('../index')
 const SELF_ID = 'urn:mrn:imo:mmsi:211653340'
 const MINUTE = 60 * 1000
 
+// SI, as the Signal K Weather API delivers it: 10 m/s from due west,
+// 1.5 m significant wave height.
+const DEFAULT_WEATHER = {
+  wind: { speedTrue: 10, directionTrue: Math.PI * 1.5 },
+  water: { waveSignificantHeight: 1.5 }
+}
+
 let dataDir
 
 beforeEach(() => {
@@ -42,15 +49,20 @@ function sailboat(overrides = {}) {
   }
 }
 
-// Minimal stand-in for the Signal K app object: only the four members the
+// Minimal stand-in for the Signal K app object: only the members the
 // plugin actually touches, plus captured error output so a test can
 // assert that failures are reported rather than swallowed.
-function stubApp(vessels = {}) {
+//
+// A weatherApi is wired in by default and answers instantly. Without it
+// the plugin would fall back to Open-Meteo and the suite would depend on
+// the network -- tests must never do that.
+function stubApp(vessels = {}, { weather = DEFAULT_WEATHER } = {}) {
   const errors = []
   return {
     selfId: SELF_ID,
     errors,
     vessels,
+    weatherApi: weather ? { getObservations: async () => [weather] } : undefined,
     debug: () => {},
     error: (msg) => errors.push(msg),
     getDataDirPath: () => dataDir,
@@ -396,5 +408,38 @@ describe('scanning the vessel model', () => {
     assert.equal(boat.track[0].sog, 9.7)
     assert.equal(boat.track[0].cog, 180)
     assert.equal(boat.firstSeen, boat.lastSeen)
+  })
+
+  it('records wind and wave conditions on each logged point', async () => {
+    const app = stubApp({ 'urn:mrn:imo:mmsi:261183840': sailboat() })
+    const plugin = createPlugin(app)
+    plugin.start({})
+    await new Promise((resolve) => setTimeout(resolve, 5300))
+    plugin.stop()
+
+    const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'sailboats.json'), 'utf8'))
+    const point = saved['261183840'].track[0]
+    // 10 m/s -> kn, 1.5*PI rad -> deg, wave height passed through in m.
+    assert.equal(point.windKn, 19.4)
+    assert.equal(point.windDir, 270)
+    assert.equal(point.waveM, 1.5)
+  })
+
+  // Weather must never be able to cost a track point: with no source at
+  // all the fix is still logged, with the fields explicitly null so a
+  // reader can tell "unknown" from "calm".
+  it('still logs the fix when weather is switched off', async () => {
+    const app = stubApp({ 'urn:mrn:imo:mmsi:261183840': sailboat() }, { weather: null })
+    const plugin = createPlugin(app)
+    plugin.start({ weatherEnabled: false })
+    await new Promise((resolve) => setTimeout(resolve, 5300))
+    plugin.stop()
+
+    const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'sailboats.json'), 'utf8'))
+    const point = saved['261183840'].track[0]
+    assert.equal(point.lat, 54.35)
+    assert.equal(point.windKn, null)
+    assert.equal(point.windDir, null)
+    assert.equal(point.waveM, null)
   })
 })
