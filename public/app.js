@@ -1,5 +1,5 @@
-const STATE_URL = '/plugins/signalk-sailtracker-noomi/state'
-const TRACK_URL = (mmsi) => `/plugins/signalk-sailtracker-noomi/boats/${mmsi}/track`
+const STATE_URL = '/plugins/signalk-sailtracker/state'
+const TRACK_URL = (mmsi) => `/plugins/signalk-sailtracker/boats/${mmsi}/track`
 const REFRESH_MS = 30000
 const PLAY_STEP_MS = 800
 // Default view. The plugin keeps retentionDays (14) of history, but showing

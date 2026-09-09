@@ -25,7 +25,7 @@ Available through the Signal K app store, or manually:
 
 ```bash
 cd ~/.signalk
-npm install signalk-sailtracker-noomi
+npm install signalk-sailtracker
 ```
 
 Then enable it under **Server → Plugin Config → ⛵ Sailtracker** and open it
@@ -82,8 +82,8 @@ timestamps. The webapp computes them in the **browser's** timezone so "one
 day" means the day you see on the clock, not a UTC day.
 
 ```
-GET /plugins/signalk-sailtracker-noomi/state?from=...&to=...
-GET /plugins/signalk-sailtracker-noomi/boats/:mmsi/track?from=...&to=...
+GET /plugins/signalk-sailtracker/state?from=...&to=...
+GET /plugins/signalk-sailtracker/boats/:mmsi/track?from=...&to=...
 ```
 
 `/state` reports `dataRange` (the full extent of retained data, so a UI can

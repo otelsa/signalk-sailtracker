@@ -1,5 +1,5 @@
 {
-  "name": "signalk-sailtracker-noomi",
+  "name": "signalk-sailtracker",
   "version": "1.1.0",
   "description": "Logs AIS sailboats seen by a Signal K server every few minutes and shows their tracks on an OpenSeaMap chart",
   "main": "index.js",

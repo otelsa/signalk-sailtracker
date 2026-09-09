@@ -1,4 +1,4 @@
-// signalk-sailtracker-noomi
+// signalk-sailtracker
 //
 // A small, playful logger: every few minutes it looks at every AIS target
 // Noomi currently sees, keeps the ones that are Class B transponders on
@@ -202,7 +202,7 @@ function boatsInWindow(boats, win) {
 
 const createPlugin = function (app) {
   const plugin = {}
-  plugin.id = 'signalk-sailtracker-noomi'
+  plugin.id = 'signalk-sailtracker'
   plugin.name = '⛵ Sailtracker'
   plugin.description =
     'Logs AIS Class B sailboats seen by Noomi every few minutes and shows them on an OpenSeaMap chart'

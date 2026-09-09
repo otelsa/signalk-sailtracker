@@ -113,7 +113,7 @@ function startPlugin(app, options = {}) {
 describe('plugin lifecycle', () => {
   it('exposes the Signal K plugin contract', () => {
     const plugin = createPlugin(stubApp())
-    assert.equal(plugin.id, 'signalk-sailtracker-noomi')
+    assert.equal(plugin.id, 'signalk-sailtracker')
     assert.equal(typeof plugin.start, 'function')
     assert.equal(typeof plugin.stop, 'function')
     assert.equal(typeof plugin.registerWithRouter, 'function')
