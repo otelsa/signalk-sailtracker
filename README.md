@@ -132,6 +132,8 @@ the fix is logged with null conditions.
 
 ## Requirements
 
+Node 20 or newer, and Signal K server 2.26.0 or newer.
+
 The plugin reads `design.aisShipType`, `sensors.ais.class` and
 `navigation.position` from the Signal K data model. Those are populated by
 the server's AIS handling; a target that only ever sends position reports
@@ -195,11 +197,21 @@ npm run coverage
 npm run prettier:check
 ```
 
+The suite covers three files, and all of them the same way: the decision
+logic sits in pure functions apart from the wiring, so tests drive it
+without timers, a server or a DOM. `index.js` exports its rules as
+`internals`, `weather.js` as `internals`, and the webapp keeps its pure
+half in `public/helpers.js` — a plain script the page loads before
+`app.js`, and a CommonJS module the tests require.
+
 CI runs the [official SignalK plugin
 pipeline](https://github.com/SignalK/signalk-server/blob/master/.github/workflows/plugin-ci.yml):
 Linux x64/arm64, macOS and Windows on Node 22 and 24, armv7 (Venus OS) on
-Node 20, plus a format check, coverage, and an integration test that installs
-the plugin into a real Signal K server.
+Node 20, plus a format check, coverage, and an integration test that
+installs the plugin into a real Signal K server. That integration test runs
+against both the current server and 2.26.0, the oldest supported: testing
+only the newest once hid a real failure, where an API declared in the
+server's types was missing from the running build.
 
 ## License
 

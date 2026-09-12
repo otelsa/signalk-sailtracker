@@ -16,3 +16,9 @@ jobs:
       coverage-command: 'npm run coverage'
       # Installs the plugin into a real SignalK server and verifies it loads.
       enable-signalk-integration: true
+      # Against the current server and against the oldest one this plugin
+      # claims to support. Testing only "latest" hid a real failure once:
+      # router.access() is declared in @signalk/server-api's types but is
+      # not implemented on every server build, and the uncaught throw left
+      # the plugin impossible to disable from the admin UI.
+      signalk-server-versions: '["2.26.0", "latest"]'

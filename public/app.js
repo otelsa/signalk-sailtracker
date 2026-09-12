@@ -6,19 +6,6 @@ const PLAY_STEP_MS = 800
 // all of it at once buries the current picture under stale tracks.
 const RECENT_DAYS = 2
 
-const PALETTE = [
-  '#4fb0e8',
-  '#f2a541',
-  '#7fd88f',
-  '#e86f9d',
-  '#c99cf2',
-  '#f2e04f',
-  '#4fe8d4',
-  '#f28a4f',
-  '#9cc9f2',
-  '#e84f4f'
-]
-
 const boatListEl = document.querySelector('#boat-list')
 const boatCountEl = document.querySelector('#boat-count')
 const intervalInfoEl = document.querySelector('#interval-info')
@@ -33,6 +20,20 @@ const sheetHandleEl = document.querySelector('#sheet-handle')
 const sheetCountEl = document.querySelector('#sheet-count')
 const sheetIntervalEl = document.querySelector('#sheet-interval')
 const recenterEl = document.querySelector('#recenter')
+
+// Pure helpers live in helpers.js so the test suite can drive them without
+// a DOM; index.html loads that file before this one.
+const {
+  colorFor,
+  fmtAge,
+  fmtDateTime,
+  dayLabel,
+  windowQuery: buildWindowQuery,
+  daysInRange,
+  escapeHtml,
+  pointPopupHtml,
+  pickTiles
+} = window.SailtrackerHelpers
 
 // Auf einem Telefon liegt die Bootsliste als Bottom-Sheet über der Karte,
 // und alles Antippbare braucht mehr Fläche als ein Mauszeiger. Beides wird
@@ -69,54 +70,19 @@ let scrubColor = null
 let scrubName = null
 let playTimer = null
 
-function colorFor(mmsi) {
-  let hash = 0
-  for (let i = 0; i < mmsi.length; i++) hash = (hash * 31 + mmsi.charCodeAt(i)) >>> 0
-  return PALETTE[hash % PALETTE.length]
-}
-
-// Ein Popup darf auf 360 px Bildschirmbreite nicht über den Rand ragen,
-// und beim Aufklappen muss die Karte weit genug nachrücken, dass es nicht
-// unter der Kopfzeile klebt.
-const POPUP_OPTS = { maxWidth: 260, autoPanPadding: [20, 20] }
-
-// Kachelquellen. Direkt angefragt sind das zwei fremde Hosts pro Gerät und
-// Ansicht -- das reizt die freien Server aus und ist genau das, was ein
-// Inhaltsblocker auf dem Telefon wegfiltert.
-const CHARTS_URL = '/signalk/v1/api/resources/charts'
-const DIRECT_TILES = {
-  base: {
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap contributors'
-  },
-  seamark: {
-    url: 'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenSeaMap contributors'
-  }
-}
-
 // Kacheln, die der Signal-K-Charts-Plugin durchreicht und zwischenspeichert.
 // Sie liegen dann auf derselben Herkunft wie diese Seite, und der fremde
 // Server sieht eine Anfrage pro Kachel statt eine pro Gerät und Ansicht.
 // Ohne dieses Plugin bleibt alles wie zuvor.
 async function proxiedTiles() {
-  const found = {}
   try {
     const res = await fetch(CHARTS_URL, { signal: AbortSignal.timeout(2500) })
-    if (!res.ok) return found
-    for (const chart of Object.values((await res.json()) || {})) {
-      const url = chart && (chart.tilemapUrl || chart.url)
-      // Ein nicht durchgereichter Eintrag trägt die fremde Adresse selbst,
-      // damit wäre nichts gewonnen.
-      if (!url || !url.includes('{z}') || chart.proxy !== true) continue
-      const tag = `${chart.identifier || ''} ${chart.name || ''}`.toLowerCase()
-      if (!found.seamark && /seamark|openseamap/.test(tag)) found.seamark = chart
-      else if (!found.base && /osm|openstreetmap/.test(tag)) found.base = chart
-    }
+    if (!res.ok) return {}
+    return pickTiles(await res.json())
   } catch (err) {
     console.warn('sailtracker: no Signal K chart provider, using public tiles', err)
+    return {}
   }
-  return found
 }
 
 function addTileLayer(proxied, direct) {
@@ -146,77 +112,17 @@ async function initMap() {
   )
 }
 
-function fmtAge(iso) {
-  if (!iso) return '–'
-  const s = Math.round((Date.now() - Date.parse(iso)) / 1000)
-  if (s < 60) return `vor ${s}s`
-  const m = Math.round(s / 60)
-  if (m < 60) return `vor ${m}m`
-  const h = Math.round(m / 60)
-  if (h < 48) return `vor ${h}h`
-  return `vor ${Math.round(h / 24)}d`
-}
-
-function pad(n) {
-  return String(n).padStart(2, '0')
-}
-
-// Absolute local date + time, e.g. "28.08.2026 15:53:29" - the timeline
-// scrubs through history, where a relative "vor 3 Tagen" stops being
-// useful; this is what actually answers "wann war das Boot dort".
-function fmtDateTime(iso) {
-  if (!iso) return '–'
-  const d = new Date(iso)
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
 // Local calendar key, e.g. "2026-09-08". Deliberately not toISOString(),
 // which would shift the day boundary to UTC and put late-evening fixes on
 // the wrong day.
-function dayKey(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function dayLabel(key) {
-  const today = dayKey(new Date())
-  if (key === today) return 'Heute'
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
-  if (key === dayKey(yesterday)) return 'Gestern'
-  const [y, m, d] = key.split('-')
-  return `${d}.${m}.${y}`
-}
-
-// Query string for the current range. Day boundaries are built via the Date
-// constructor rather than "+24h" so a DST switch doesn't clip or stretch a
-// day. The server treats the window as [from, to).
+// The pure helper takes the range explicitly; this binds it to the
+// module-level state the rest of the app mutates.
 function windowQuery() {
-  if (range.mode === 'all') return ''
-  if (range.mode === 'day') {
-    const [y, m, d] = range.day.split('-').map(Number)
-    const from = new Date(y, m - 1, d)
-    const to = new Date(y, m - 1, d + 1)
-    return `?from=${from.toISOString()}&to=${to.toISOString()}`
-  }
-  const from = new Date()
-  from.setDate(from.getDate() - RECENT_DAYS)
-  return `?from=${from.toISOString()}`
+  return buildWindowQuery(range, RECENT_DAYS)
 }
 
 function buildRangeOptions(dataRange) {
-  const days = []
-  if (dataRange && dataRange.from && dataRange.to) {
-    const first = new Date(dataRange.from)
-    const last = new Date(dataRange.to)
-    let cursor = new Date(last.getFullYear(), last.getMonth(), last.getDate())
-    const firstDay = new Date(first.getFullYear(), first.getMonth(), first.getDate())
-    // Guard against a corrupt timestamp producing an unbounded loop.
-    while (cursor >= firstDay && days.length < 60) {
-      days.push(dayKey(cursor))
-      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() - 1)
-    }
-  }
-
+  const days = daysInRange(dataRange)
   const key = days.join(',')
   if (key === dayOptionsKey) return
   dayOptionsKey = key
@@ -271,13 +177,6 @@ function renderList(boats) {
   }
 }
 
-function escapeHtml(value) {
-  return String(value).replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
-  )
-}
-
 function clearLayers() {
   for (const { polyline, marker } of trackLayers.values()) {
     map.removeLayer(polyline)
@@ -285,23 +184,6 @@ function clearLayers() {
   }
   trackLayers.clear()
   stopScrub()
-}
-
-// Conditions are only present on points logged after weather recording
-// was added, and stay null whenever no source could answer -- so the
-// weather line is omitted rather than showing a row of dashes.
-function wxHtml(point) {
-  const parts = []
-  if (point.windDir !== null && point.windDir !== undefined) parts.push(`${point.windDir}°`)
-  if (point.windKn !== null && point.windKn !== undefined) parts.push(`${point.windKn} kn`)
-  const wind = parts.length ? `Wind ${parts.join(' / ')}` : null
-  const wave = point.waveM !== null && point.waveM !== undefined ? `Welle ${point.waveM} m` : null
-  const line = [wind, wave].filter(Boolean).join(' · ')
-  return line ? `<br><span class="wx">${line}</span>` : ''
-}
-
-function pointPopupHtml(name, point) {
-  return `<strong>${escapeHtml(name)}</strong><br>${point.sog ?? '–'} kn · ${point.cog ?? '–'}°${wxHtml(point)}<br>${fmtDateTime(point.t)}`
 }
 
 // "Alle" mode: one static polyline + marker at the latest point per boat,
