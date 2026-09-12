@@ -67,6 +67,30 @@ The number of _boats_ is not capped, though: with the wide net out in a
 busy shipping lane the file grows a lot faster than usual. The webapp says
 which mode is in force under the boat list.
 
+## Chart tiles
+
+The chart is OpenStreetMap with the OpenSeaMap seamark layer on top. By
+default the browser fetches both straight from the public tile servers,
+which means every device and every view hits two foreign hosts — enough
+for a content blocker to filter them, and more load than those free
+community servers deserve.
+
+If [`@signalk/charts-plugin`](https://github.com/SignalK/charts-plugin) is
+installed with **Proxy through Signal K server** enabled, the webapp uses
+it instead, and no configuration here is needed: it reads
+`/signalk/v1/api/resources/charts` at startup and picks up any proxied
+chart whose name or identifier contains `osm`/`openstreetmap` for the base
+layer and `seamark`/`openseamap` for the overlay. Tiles then come from the
+same origin as the page, and Signal K serves them from its own disk cache,
+so each tile is fetched from the public server once rather than once per
+device and view. As a side effect the chart keeps working offline for
+water you have already looked at.
+
+Anything missing falls back to the public URL, so the plugin works
+unchanged without the charts plugin. Attribution names the source of the
+data and therefore stays either way. The browser console reports which
+path each layer took.
+
 ## Weather
 
 Each track point also records the conditions at that position and time:

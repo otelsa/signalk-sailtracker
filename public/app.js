@@ -80,20 +80,70 @@ function colorFor(mmsi) {
 // unter der Kopfzeile klebt.
 const POPUP_OPTS = { maxWidth: 260, autoPanPadding: [20, 20] }
 
-function initMap() {
+// Kachelquellen. Direkt angefragt sind das zwei fremde Hosts pro Gerät und
+// Ansicht -- das reizt die freien Server aus und ist genau das, was ein
+// Inhaltsblocker auf dem Telefon wegfiltert.
+const CHARTS_URL = '/signalk/v1/api/resources/charts'
+const DIRECT_TILES = {
+  base: {
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors'
+  },
+  seamark: {
+    url: 'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenSeaMap contributors'
+  }
+}
+
+// Kacheln, die der Signal-K-Charts-Plugin durchreicht und zwischenspeichert.
+// Sie liegen dann auf derselben Herkunft wie diese Seite, und der fremde
+// Server sieht eine Anfrage pro Kachel statt eine pro Gerät und Ansicht.
+// Ohne dieses Plugin bleibt alles wie zuvor.
+async function proxiedTiles() {
+  const found = {}
+  try {
+    const res = await fetch(CHARTS_URL, { signal: AbortSignal.timeout(2500) })
+    if (!res.ok) return found
+    for (const chart of Object.values((await res.json()) || {})) {
+      const url = chart && (chart.tilemapUrl || chart.url)
+      // Ein nicht durchgereichter Eintrag trägt die fremde Adresse selbst,
+      // damit wäre nichts gewonnen.
+      if (!url || !url.includes('{z}') || chart.proxy !== true) continue
+      const tag = `${chart.identifier || ''} ${chart.name || ''}`.toLowerCase()
+      if (!found.seamark && /seamark|openseamap/.test(tag)) found.seamark = chart
+      else if (!found.base && /osm|openstreetmap/.test(tag)) found.base = chart
+    }
+  } catch (err) {
+    console.warn('sailtracker: no Signal K chart provider, using public tiles', err)
+  }
+  return found
+}
+
+function addTileLayer(proxied, direct) {
+  // Die Namensnennung gilt der Quelle der Daten, nicht dem Weg, den die
+  // Bytes genommen haben -- sie bleibt also in beiden Fällen stehen.
+  const url = proxied ? proxied.tilemapUrl || proxied.url : direct.url
+  L.tileLayer(url, {
+    attribution: direct.attribution,
+    maxZoom: proxied && proxied.maxzoom ? proxied.maxzoom : 18
+  }).addTo(map)
+  return Boolean(proxied)
+}
+
+async function initMap() {
   map = L.map('map', { zoomControl: true }).setView([54.5, 16.5], 9)
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 18
-  }).addTo(map)
-  L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenSeaMap contributors',
-    maxZoom: 18
-  }).addTo(map)
   // Ein Tipper auf die Karte heißt "ich will die Karte sehen".
   map.on('click', () => {
     if (sheetLayout()) setSheet(false)
   })
+
+  const proxied = await proxiedTiles()
+  const viaBase = addTileLayer(proxied.base, DIRECT_TILES.base)
+  const viaSeamark = addTileLayer(proxied.seamark, DIRECT_TILES.seamark)
+  console.info(
+    `sailtracker: Grundkarte ${viaBase ? 'über Signal K' : 'direkt'}, ` +
+      `Seezeichen ${viaSeamark ? 'über Signal K' : 'direkt'}`
+  )
 }
 
 function fmtAge(iso) {
@@ -482,6 +532,6 @@ window.addEventListener('resize', () => {
   resizeTimer = setTimeout(() => map.invalidateSize(), 150)
 })
 
-initMap()
+initMap().catch((err) => console.error('sailtracker: map init failed', err))
 refresh()
 setInterval(refresh, REFRESH_MS)
