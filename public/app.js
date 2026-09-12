@@ -70,6 +70,26 @@ let scrubColor = null
 let scrubName = null
 let playTimer = null
 
+// Ein Popup darf auf 360 px Bildschirmbreite nicht über den Rand ragen,
+// und beim Aufklappen muss die Karte weit genug nachrücken, dass es nicht
+// unter der Kopfzeile klebt.
+const POPUP_OPTS = { maxWidth: 260, autoPanPadding: [20, 20] }
+
+// Kachelquellen. Direkt angefragt sind das zwei fremde Hosts pro Gerät und
+// Ansicht -- das reizt die freien Server aus und ist genau das, was ein
+// Inhaltsblocker auf dem Telefon wegfiltert.
+const CHARTS_URL = '/signalk/v1/api/resources/charts'
+const DIRECT_TILES = {
+  base: {
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors'
+  },
+  seamark: {
+    url: 'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenSeaMap contributors'
+  }
+}
+
 // Kacheln, die der Signal-K-Charts-Plugin durchreicht und zwischenspeichert.
 // Sie liegen dann auf derselben Herkunft wie diese Seite, und der fremde
 // Server sieht eine Anfrage pro Kachel statt eine pro Gerät und Ansicht.
